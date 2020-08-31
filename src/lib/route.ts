@@ -1,7 +1,5 @@
 import { Context, Next } from "koa";
 
-type Route = (ctx: Context) => Promise<void>;
-
 enum HOOK_METHOD {
   ALL = "all",
   FIND = "find",
@@ -13,31 +11,75 @@ enum HOOK_METHOD {
 }
 
 enum HTTP_METHOD {
-  GET = "get",
-  POST = "post",
-  PATCH = "patch",
-  PUT = "put",
-  DELETE = "delete",
+  GET = "GET",
+  POST = "POST",
+  PATCH = "PATCH",
+  PUT = "PUT",
+  DELETE = "DELETE",
 }
 
-type Router = {
-  [method in HOOK_METHOD]: Route[];
+type Hook = (hook: Context) => Promise<Context | void> | Context | void;
+
+type HookMap = {
+  [method in HOOK_METHOD]: Hook[];
 };
 
-interface IHook {
-  before: Router;
-  after: Router;
-  error: Router;
+interface HooksObject{
+  before: HookMap;
+  after: HookMap;
+  error: HookMap;
+  finally?: HookMap;
 }
 
-const hooks = new Map<string, IHook>();
+const hooks = new Map<string, HooksObject>();
 
-hooks.set("messages", {
+const addMessagesService = () => {
+  hooks.set("/messages", {
+    before: {
+      all: [],
+      find: [],
+      get: [],
+      create: [
+        async (ctx) => {
+          ctx.body = "hello world";
+        },
+      ],
+      update: [],
+      patch: [],
+      remove: [],
+    },
+    after: {
+      all: [],
+      find: [],
+      get: [],
+      create: [],
+      update: [],
+      patch: [],
+      remove: [],
+    },
+    error: {
+      all: [],
+      find: [],
+      get: [],
+      create: [],
+      update: [],
+      patch: [],
+      remove: [],
+    },
+  });
+};
+
+hooks.set("/services", {
   before: {
     all: [],
     find: [],
     get: [],
-    create: [],
+    create: [
+      async (ctx) => {
+        addMessagesService();
+        ctx.body = "hello world";
+      },
+    ],
     update: [],
     patch: [],
     remove: [],
@@ -62,25 +104,34 @@ hooks.set("messages", {
   },
 });
 
-const matchHook = (path: string): IHook | undefined => {
+const matchHook = (path: string): HooksObject | undefined => {
+  console.log(hooks.get(path));
+  console.log(path);
   return hooks.get(path);
 };
 
-const execRouter = async (ctx: Context, Router: Router): Promise<void> => {
+const execHookMap = async (ctx: Context, hookMap: HookMap): Promise<void> => {
+  hookMap.all.forEach((hook) => hook(ctx));
+
   switch (ctx.method) {
     case HTTP_METHOD.DELETE: {
+      hookMap.remove.forEach((hook) => hook(ctx));
       break;
     }
     case HTTP_METHOD.GET: {
+      hookMap.get.forEach((hook) => hook(ctx));
       break;
     }
     case HTTP_METHOD.PATCH: {
+      hookMap.patch.forEach((hook) => hook(ctx));
       break;
     }
     case HTTP_METHOD.POST: {
+      hookMap.create.forEach((hook) => hook(ctx));
       break;
     }
     case HTTP_METHOD.PUT: {
+      hookMap.update.forEach((hook) => hook(ctx));
       break;
     }
     default: {
@@ -91,17 +142,33 @@ const execRouter = async (ctx: Context, Router: Router): Promise<void> => {
 
 const route = async (ctx: Context, next: Next): Promise<void> => {
   console.debug(ctx.method, ctx.path);
-  const hook = matchHook(ctx.method);
+  const hook = matchHook(ctx.path);
 
   if (hook == null) {
     return await next();
   }
+
   try {
-    execRouter(ctx, hook.before);
+    execHookMap(ctx, hook.before);
   } catch (error) {
-    console.log("[Error] at route", error);
+    try {
+      execHookMap(ctx, hook.error);
+    } catch (error) {
+      console.log("[Error] at route", error);
+    }
   }
+
   await next();
+
+  try {
+    execHookMap(ctx, hook.after);
+  } catch (error) {
+    try {
+      execHookMap(ctx, hook.error);
+    } catch (error) {
+      console.log("[Error] at route", error);
+    }
+  }
 };
 
 export default route;
